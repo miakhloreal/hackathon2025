@@ -73,8 +73,16 @@ export function Chat() {
       const jsonRegex = /\{(?:[^{}]|(?:\{[^{}]*\}))*\}/;
       const jsonMatch = text.match(jsonRegex);
       if (jsonMatch) {
-        const product = JSON.parse(jsonMatch[0]);
-        return [product];
+        const productData = JSON.parse(jsonMatch[0]);
+        // Only include the essential information in the product card
+        return [
+          {
+            name: productData.name,
+            description: productData.description, // This is just the review summary
+            price: productData.price || '€XX.XX',
+            url: productData.url || '#',
+          },
+        ];
       }
     } catch (e) {
       console.error('Error parsing product JSON:', e);
