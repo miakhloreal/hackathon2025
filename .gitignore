@@ -45,3 +45,6 @@ src/data/*
 *.sqlite
 *.vec
 *.bin 
+
+#data
+data/reviews/
