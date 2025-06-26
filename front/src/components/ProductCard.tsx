@@ -1,4 +1,4 @@
-import { Product } from '../types/chat';
+import type { Product } from '../types/chat';
 
 interface ProductCardProps {
   product: Product;

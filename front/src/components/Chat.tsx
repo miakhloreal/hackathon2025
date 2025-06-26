@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChatMessage, ChatResponse } from '../types/chat';
+import type { ChatMessage, ChatResponse } from '../types/chat';
 import { ProductCard } from './ProductCard';
 
 export function Chat() {
