@@ -28,7 +28,7 @@ app.add_middleware(
 PROJECT_ID =  "365841691090"
 LOCATION =  "europe-west4"
 MODEL_ID =  "gemini-2.0-flash-001"
-RAG_CORPUS_NAME = "projects/365841691090/locations/europe-west4/ragCorpora/666532744850833408"
+RAG_CORPUS_NAME = "projects/365841691090/locations/europe-west4/ragCorpora/1179943102371069952"
 
 # Retrieval configuration
 RETRIEVAL_TOP_K = 10
@@ -64,6 +64,7 @@ class ProductRecommendation(BaseModel):
     price: str = "€XX.XX"  # Default price if not available
     url: str = "#"  # Default URL if not available
     description: str
+    ingredients: List[str] = []
     advantages: List[str] = []
     suitability: List[str] = []
     questions: List[str] = []
@@ -87,6 +88,11 @@ Product: [Single product name as found in RAG]
 
 Reviews Summary: [Focused summary of reviews for this specific product]
 
+## 👩🏼‍🔬 Information about the ingredients:
+• [List key active ingredients found in RAG data]
+• [Include concentration percentages if available]
+• [Mention any notable ingredients that make this product effective]
+
 ## 🌟 PRODUCT ADVANTAGES
 • [First key advantage of this product]
 • [Second key advantage of this product]
@@ -106,11 +112,12 @@ However, if the user is asking a general question about beauty, skincare, or pro
 
 If the RAG system doesn't provide certain information, acknowledge what's missing rather than making assumptions."""
 
-def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], list[str]]:
-    """Extract product name, review summary, advantages, suitability reasons, and follow-up questions from RAG response."""
+def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], list[str], list[str]]:
+    """Extract product name, review summary, ingredients, advantages, suitability reasons, and follow-up questions from RAG response."""
     # Take only the first occurrence of each section to avoid duplicates
     product_name = ""
     review_summary = ""
+    ingredients = []
     advantages = []
     suitability = []
     questions = []
@@ -132,6 +139,11 @@ def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], lis
         if match:
             review_summary = match.group(1).strip()
             break
+
+    # Extract ingredients (only first section)
+    ingredients_section = re.search(r"## 👩🏼‍🔬 Here are the ingredients:\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
+    if ingredients_section:
+        ingredients = [ing.strip().lstrip('•').strip() for ing in ingredients_section.group(1).split('\n') if ing.strip()]
     
     # Extract advantages (only first section)
     advantages_section = re.search(r"## 🌟 PRODUCT ADVANTAGES\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
@@ -148,7 +160,7 @@ def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], lis
     if questions_section:
         questions = [q.strip().lstrip('•').strip() for q in questions_section.group(1).split('\n') if q.strip()]
     
-    return product_name, review_summary, advantages, suitability, questions
+    return product_name, review_summary, ingredients, advantages, suitability, questions
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -173,7 +185,8 @@ async def chat(request: ChatRequest):
             )
 
         # Clean up the response text to remove any duplicate sections
-        cleaned_text = re.sub(r'(## 🌟 PRODUCT ADVANTAGES.*?(?=##|$))(.*\1)', r'\1', response.text, flags=re.DOTALL)
+        cleaned_text = re.sub(r'(## 👩🏼‍🔬 Here are the ingredients:.*?(?=##|$))(.*\1)', r'\1', response.text, flags=re.DOTALL)
+        cleaned_text = re.sub(r'(## 🌟 PRODUCT ADVANTAGES.*?(?=##|$))(.*\1)', r'\1', cleaned_text, flags=re.DOTALL)
         cleaned_text = re.sub(r'(## ✨ WHY IT\'S RIGHT FOR YOU.*?(?=##|$))(.*\1)', r'\1', cleaned_text, flags=re.DOTALL)
         cleaned_text = re.sub(r'(## 💫 LET\'S PERSONALIZE FURTHER.*?(?=##|$))(.*\1)', r'\1', cleaned_text, flags=re.DOTALL)
 
@@ -187,12 +200,13 @@ async def chat(request: ChatRequest):
                     cleaned_text = "Product:" + re.split(r'Product:', parts[1], flags=re.IGNORECASE)[0]
 
         # Extract product information from cleaned text
-        product_name, review_summary, advantages, suitability, questions = extract_product_info(cleaned_text)
+        product_name, review_summary, ingredients, advantages, suitability, questions = extract_product_info(cleaned_text)
 
         # Create formatted response
         formatted_response = {
             "name": product_name,
             "description": review_summary,
+            "ingredients": ingredients,
             "advantages": advantages,
             "suitability": suitability,
             "questions": questions
@@ -209,6 +223,7 @@ async def chat(request: ChatRequest):
             products=[ProductRecommendation(
                 name=product_name,
                 description=review_summary,
+                ingredients=ingredients,
                 advantages=advantages,
                 suitability=suitability,
                 questions=questions

@@ -92,10 +92,10 @@ export function Chat() {
 
   const formatResponseText = (text: string) => {
     // Remove everything up to the first section header
-    const cleanedText = text.replace(/^[\s\S]*?(## 🌟)/, '## 🌟').trim();
+    const cleanedText = text.replace(/^[\s\S]*?(## [👩🏼‍🔬🌟✨💫])/, '$1').trim();
 
     // Split the content into sections
-    const sections = cleanedText.split(/(?=## [🌟✨💫])/);
+    const sections = cleanedText.split(/(?=## [👩🏼‍🔬🌟✨💫])/);
 
     return sections.map((section, index) => {
       if (!section.trim()) return null;

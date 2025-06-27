@@ -8,6 +8,10 @@ export interface Product {
   price: string;
   url: string;
   description: string;
+  ingredients: string[];
+  advantages: string[];
+  suitability: string[];
+  questions: string[];
 }
 
 export interface ChatResponse {
