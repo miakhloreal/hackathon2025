@@ -101,33 +101,57 @@ Requirements:
 Format your response EXACTLY like this:
 PRODUCT_IMAGE_URL: [paste the single URL from RAG data here]"""
 
-PRODUCT_DETAILS_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
+PRODUCT_INGREDIENTS_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
 
-You are a L'Oréal beauty advisor analyzing the RAG search results for the following product:
-
+You are a L'Oréal cosmetic ingredients expert analyzing the RAG search results for:
 {product_name}
 
-Please provide detailed information about this specific product using the following format:
+Focus ONLY on the ingredients information. List the key active ingredients with their benefits and concentrations if available.
+Format your response with bullet points:
 
-## 👩🏼‍🔬 Information about the ingredients:
-• [List key active ingredients found in RAG data]
-• [Include concentration percentages if available]
-• [Mention any notable ingredients that make this product effective]
+## 👩🏼‍🔬 Key Ingredients:
+• [First key ingredient with concentration if available]
+• [Second key ingredient with its benefits]
+• [Additional notable ingredients that make this product effective]"""
+
+PRODUCT_ADVANTAGES_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
+
+You are a L'Oréal product expert analyzing the RAG search results for:
+{product_name}
+
+Focus ONLY on the product's main advantages and benefits. List 3-4 key advantages.
+Format your response with bullet points:
 
 ## 🌟 PRODUCT ADVANTAGES
-• [First key advantage of this product]
-• [Second key advantage of this product]
-• [Third key advantage of this product]
+• [First key advantage with supporting evidence]
+• [Second key advantage with specific benefits]
+• [Third key advantage with unique selling point]"""
+
+PRODUCT_SUITABILITY_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
+
+You are a L'Oréal beauty advisor analyzing the RAG search results for:
+{product_name}
+
+Focus ONLY on why this product is suitable for the user. List 3 main reasons.
+Format your response with bullet points:
 
 ## ✨ WHY IT'S RIGHT FOR YOU
-• [First reason this specific product matches user needs]
-• [Second reason this specific product is suitable]
-• [Third reason to choose this product]
+• [First reason with specific skin/hair type suitability]
+• [Second reason with specific concerns it addresses]
+• [Third reason with expected benefits]"""
 
-## 💫 LET'S PERSONALIZE FURTHER
-• Have you tried similar products before? What was your experience?
-• What specific concerns would you like this product to address?
-• When do you plan to use this product in your routine?"""
+PRODUCT_QUESTIONS_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
+
+You are a L'Oréal beauty consultant analyzing the RAG search results for:
+{product_name}
+
+Create 2-3 follow-up questions to better understand the user's needs and preferences.
+Format your response with bullet points:
+
+## 💫 PERSONALIZATION QUESTIONS
+• [Question about previous experience with similar products]
+• [Question about specific concerns to address]
+• [Question about usage preferences/routine]"""
 
 def extract_product_info_basic(text: str) -> tuple[str, str]:
     """Extract product name and review summary from RAG response."""
@@ -170,34 +194,12 @@ def extract_image_url(text: str) -> str:
             return url.strip().rstrip('.,)')  # Clean up any trailing punctuation
     return ""
 
-def extract_product_details(text: str) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Extract ingredients, advantages, suitability reasons, and follow-up questions from RAG response."""
-    ingredients = []
-    advantages = []
-    suitability = []
-    questions = []
-    
-    # Extract ingredients (only first section)
-    ingredients_section = re.search(r"## 👩🏼‍🔬 Information about the ingredients:\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
-    if ingredients_section:
-        ingredients = [ing.strip().lstrip('•').strip() for ing in ingredients_section.group(1).split('\n') if ing.strip()]
-    
-    # Extract advantages (only first section)
-    advantages_section = re.search(r"## 🌟 PRODUCT ADVANTAGES\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
-    if advantages_section:
-        advantages = [adv.strip().lstrip('•').strip() for adv in advantages_section.group(1).split('\n') if adv.strip()]
-    
-    # Extract suitability reasons (only first section)
-    suitability_section = re.search(r"## ✨ WHY IT'S RIGHT FOR YOU\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
-    if suitability_section:
-        suitability = [reason.strip().lstrip('•').strip() for reason in suitability_section.group(1).split('\n') if reason.strip()]
-
-    # Extract follow-up questions (only first section)
-    questions_section = re.search(r"## 💫 LET'S PERSONALIZE FURTHER\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
-    if questions_section:
-        questions = [q.strip().lstrip('•').strip() for q in questions_section.group(1).split('\n') if q.strip()]
-    
-    return ingredients, advantages, suitability, questions
+def extract_section_items(text: str, emoji: str) -> list[str]:
+    """Extract bullet points from a section marked with the given emoji."""
+    section = re.search(fr"## [{emoji}][^\n]*\s*((?:•[^\n]+\n?)+)", text)
+    if section:
+        return [item.strip().lstrip('•').strip() for item in section.group(1).split('\n') if item.strip()]
+    return []
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -242,24 +244,51 @@ async def chat(request: ChatRequest):
         # Extract image URL
         image_url = extract_image_url(image_response.text if image_response.text else "")
 
-        # Third RAG call: Get detailed product information
-        details_response = client.models.generate_content(
+        # Third RAG call: Get ingredients information
+        ingredients_response = client.models.generate_content(
             model=MODEL_ID,
-            contents=f"Tell me about {product_name}",
+            contents=f"Tell me about the ingredients in {product_name}",
             config=GenerateContentConfig(
                 tools=[rag_retrieval_tool],
-                system_instruction=PRODUCT_DETAILS_PROMPT.format(product_name=product_name)
+                system_instruction=PRODUCT_INGREDIENTS_PROMPT.format(product_name=product_name)
             )
         )
 
-        if not details_response.text:
-            return ChatResponse(
-                text="I apologize, I couldn't generate detailed product information.",
-                products=[]
+        # Fourth RAG call: Get product advantages
+        advantages_response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=f"What are the main advantages of {product_name}",
+            config=GenerateContentConfig(
+                tools=[rag_retrieval_tool],
+                system_instruction=PRODUCT_ADVANTAGES_PROMPT.format(product_name=product_name)
             )
+        )
 
-        # Extract detailed product information
-        ingredients, advantages, suitability, questions = extract_product_details(details_response.text)
+        # Fifth RAG call: Get product suitability
+        suitability_response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=f"Why is {product_name} right for the user",
+            config=GenerateContentConfig(
+                tools=[rag_retrieval_tool],
+                system_instruction=PRODUCT_SUITABILITY_PROMPT.format(product_name=product_name)
+            )
+        )
+
+        # Sixth RAG call: Get follow-up questions
+        questions_response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=f"What follow-up questions should we ask about {product_name}",
+            config=GenerateContentConfig(
+                tools=[rag_retrieval_tool],
+                system_instruction=PRODUCT_QUESTIONS_PROMPT.format(product_name=product_name)
+            )
+        )
+
+        # Extract all product information
+        ingredients = extract_section_items(ingredients_response.text if ingredients_response.text else "", "👩🏼‍🔬")
+        advantages = extract_section_items(advantages_response.text if advantages_response.text else "", "🌟")
+        suitability = extract_section_items(suitability_response.text if suitability_response.text else "", "✨")
+        questions = extract_section_items(questions_response.text if questions_response.text else "", "💫")
 
         # Create formatted response
         formatted_response = {
@@ -272,12 +301,13 @@ async def chat(request: ChatRequest):
             "questions": questions
         }
 
-        # Combine both responses
-        text_response = (
-            json.dumps(formatted_response, indent=2) + "\n\n" +
-            recommendation_response.text + "\n\n" +
-            details_response.text
-        )
+        # Combine all responses
+        text_response = json.dumps(formatted_response, indent=2)
+        text_response += "\n\n" + (recommendation_response.text or "")
+        text_response += "\n\n" + (ingredients_response.text or "")
+        text_response += "\n\n" + (advantages_response.text or "")
+        text_response += "\n\n" + (suitability_response.text or "")
+        text_response += "\n\n" + (questions_response.text or "")
 
         return ChatResponse(
             text=text_response,
