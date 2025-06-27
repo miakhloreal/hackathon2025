@@ -2,6 +2,29 @@ import { useState, useRef, useEffect } from 'react';
 import type { ChatMessage, ChatResponse } from '../types/chat';
 import { ProductCard } from './ProductCard';
 
+function TypingIndicator() {
+  return (
+    <div className='flex justify-start'>
+      <div className='bg-muted rounded-lg p-4 max-w-[80%]'>
+        <div className='flex items-center space-x-2'>
+          <div
+            className='w-2 h-2 bg-primary rounded-full animate-bounce'
+            style={{ animationDelay: '0ms' }}
+          ></div>
+          <div
+            className='w-2 h-2 bg-primary rounded-full animate-bounce'
+            style={{ animationDelay: '150ms' }}
+          ></div>
+          <div
+            className='w-2 h-2 bg-primary rounded-full animate-bounce'
+            style={{ animationDelay: '300ms' }}
+          ></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -91,7 +114,7 @@ export function Chat() {
           {
             name: productData.name,
             description: productData.description,
-            price: productData.price || '€XX.XX',
+            price: productData.price || '€18.99',
             url: productData.url || '#',
             image_url: productData.image_url || '',
             ingredients: productData.ingredients || [],
@@ -186,6 +209,7 @@ export function Chat() {
             </div>
           </div>
         ))}
+        {isLoading && <TypingIndicator />}
         <div ref={messagesEndRef} />
       </div>
 
@@ -203,7 +227,7 @@ export function Chat() {
           disabled={isLoading}
           className='inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2'
         >
-          {isLoading ? 'Thinking...' : 'Send'}
+          Send
         </button>
       </form>
     </div>

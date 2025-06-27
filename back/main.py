@@ -61,7 +61,7 @@ class ChatRequest(BaseModel):
 
 class ProductRecommendation(BaseModel):
     name: str
-    price: str = "€XX.XX"  # Default price if not available
+    price: str = "€18.99"  # Default price if not available
     url: str = "#"  # Default URL if not available
     image_url: str = ""  # Product image URL
     description: str
