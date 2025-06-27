@@ -63,6 +63,7 @@ class ProductRecommendation(BaseModel):
     name: str
     price: str = "€XX.XX"  # Default price if not available
     url: str = "#"  # Default URL if not available
+    image_url: str = ""  # Product image URL
     description: str
     ingredients: List[str] = []
     advantages: List[str] = []
@@ -85,6 +86,20 @@ Structure your response as follows:
 
 Product: [Single product name as found in RAG]
 Reviews Summary: [Brief summary of reviews for this specific product]"""
+
+PRODUCT_IMAGE_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response.
+
+You are a L'Oréal product image specialist. Your task is to find EXACTLY ONE image URL for this specific product from the RAG data:
+{product_name}
+
+Requirements:
+1. Return EXACTLY ONE image URL from the RAG data
+2. The URL must be a direct link to the product image
+3. Do NOT search external sources or L'Oréal's website
+4. Only use URLs found in the RAG search results
+
+Format your response EXACTLY like this:
+PRODUCT_IMAGE_URL: [paste the single URL from RAG data here]"""
 
 PRODUCT_DETAILS_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
 
@@ -139,6 +154,22 @@ def extract_product_info_basic(text: str) -> tuple[str, str]:
     
     return product_name, review_summary
 
+def extract_image_url(text: str) -> str:
+    """Extract image URL from the RAG response."""
+    # Look for any URLs in the text that might be images
+    url_patterns = [
+        r"PRODUCT_IMAGE_URL:\s*(https?://[^\s\n]+)",  # Our specified format
+        r"(?:image_url|image|img|src):\s*(https?://[^\s\n]+)",  # Common image URL patterns
+        r"https?://[^\s\n]+\.(?:jpg|jpeg|png|gif|webp)"  # Direct image URLs
+    ]
+    
+    for pattern in url_patterns:
+        image_match = re.search(pattern, text, re.IGNORECASE)
+        if image_match:
+            url = image_match.group(1) if len(image_match.groups()) > 0 else image_match.group(0)
+            return url.strip().rstrip('.,)')  # Clean up any trailing punctuation
+    return ""
+
 def extract_product_details(text: str) -> tuple[list[str], list[str], list[str], list[str]]:
     """Extract ingredients, advantages, suitability reasons, and follow-up questions from RAG response."""
     ingredients = []
@@ -171,13 +202,10 @@ def extract_product_details(text: str) -> tuple[list[str], list[str], list[str],
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        # Get the last user message
-        last_message = request.messages[-1].content
-        
         # First RAG call: Get product recommendation
         recommendation_response = client.models.generate_content(
             model=MODEL_ID,
-            contents=last_message,
+            contents=request.messages[-1].content,
             config=GenerateContentConfig(
                 tools=[rag_retrieval_tool],
                 system_instruction=PRODUCT_RECOMMENDATION_PROMPT
@@ -194,13 +222,27 @@ async def chat(request: ChatRequest):
         product_name, review_summary = extract_product_info_basic(recommendation_response.text)
 
         if not product_name:
-            # If no product was recommended, return the general response
             return ChatResponse(
                 text=recommendation_response.text,
                 products=[]
             )
 
-        # Second RAG call: Get detailed product information
+        # Second RAG call: Get product image
+        image_response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=f"Give me the image url for the product: {product_name}",
+            config=GenerateContentConfig(
+                tools=[rag_retrieval_tool],
+                system_instruction=PRODUCT_IMAGE_PROMPT.format(product_name=product_name)
+            )
+        )
+
+        print('image_response', image_response.text)
+
+        # Extract image URL
+        image_url = extract_image_url(image_response.text if image_response.text else "")
+
+        # Third RAG call: Get detailed product information
         details_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"Tell me about {product_name}",
@@ -222,6 +264,7 @@ async def chat(request: ChatRequest):
         # Create formatted response
         formatted_response = {
             "name": product_name,
+            "image_url": image_url,
             "description": review_summary,
             "ingredients": ingredients,
             "advantages": advantages,
@@ -241,6 +284,7 @@ async def chat(request: ChatRequest):
             products=[ProductRecommendation(
                 name=product_name,
                 description=review_summary,
+                image_url=image_url,
                 ingredients=ingredients,
                 advantages=advantages,
                 suitability=suitability,

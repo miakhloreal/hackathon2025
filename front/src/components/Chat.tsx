@@ -78,9 +78,14 @@ export function Chat() {
         return [
           {
             name: productData.name,
-            description: productData.description, // This is just the review summary
+            description: productData.description,
             price: productData.price || '€XX.XX',
             url: productData.url || '#',
+            image_url: productData.image_url || '',
+            ingredients: productData.ingredients || [],
+            advantages: productData.advantages || [],
+            suitability: productData.suitability || [],
+            questions: productData.questions || [],
           },
         ];
       }
