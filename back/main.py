@@ -265,15 +265,23 @@ async def chat(request: ChatRequest):
         # Extract image URL
         image_url = extract_image_url(image_response.text if image_response.text else "")
 
-        # Fourth RAG call: Get ingredients information
-        ingredients_response = client.models.generate_content(
-            model=MODEL_ID,
-            contents=f"Tell me about the ingredients in {product_name}",
-            config=GenerateContentConfig(
-                tools=[rag_retrieval_tool],
-                system_instruction=PRODUCT_INGREDIENTS_PROMPT.format(product_name=product_name)
+        # Initialize ingredients list
+        ingredients = []
+        ingredients_response_text = ""
+
+        # Only get ingredients if specifically asked for them
+        if any(keyword in request.messages[-1].content.lower() for keyword in ["ingredients", "what's in it", "what is in it", "composition"]):
+            # Get ingredients information
+            ingredients_response = client.models.generate_content(
+                model=MODEL_ID,
+                contents=f"Tell me about the ingredients in {product_name}",
+                config=GenerateContentConfig(
+                    tools=[rag_retrieval_tool],
+                    system_instruction=PRODUCT_INGREDIENTS_PROMPT.format(product_name=product_name)
+                )
             )
-        )
+            ingredients = extract_section_items(ingredients_response.text if ingredients_response.text else "", "👩🏼‍🔬")
+            ingredients_response_text = ingredients_response.text if ingredients_response.text else ""
 
         # Fifth RAG call: Get product advantages
         advantages_response = client.models.generate_content(
@@ -305,21 +313,15 @@ async def chat(request: ChatRequest):
             )
         )
 
-        # Extract all product information
-        ingredients = extract_section_items(ingredients_response.text if ingredients_response.text else "", "👩🏼‍🔬")
-        advantages = extract_section_items(advantages_response.text if advantages_response.text else "", "🌟")
-        suitability = extract_section_items(suitability_response.text if suitability_response.text else "", "✨")
-        questions = extract_section_items(questions_response.text if questions_response.text else "", "💫")
-
         # Create formatted response
         formatted_response = {
             "name": product_name,
             "image_url": image_url,
             "description": review_summary,
             "ingredients": ingredients,
-            "advantages": advantages,
-            "suitability": suitability,
-            "questions": questions
+            "advantages": extract_section_items(advantages_response.text if advantages_response.text else "", "🌟"),
+            "suitability": extract_section_items(suitability_response.text if suitability_response.text else "", "✨"),
+            "questions": extract_section_items(questions_response.text if questions_response.text else "", "💫")
         }
 
         # Combine all responses
@@ -327,7 +329,8 @@ async def chat(request: ChatRequest):
         text_response += "\n\n" + (recommendation_response.text or "")
         text_response += "\n\n" + (suitability_response.text or "")
         text_response += "\n\n" + (review_response.text or "")
-        text_response += "\n\n" + (ingredients_response.text or "")
+        if ingredients_response_text:
+            text_response += "\n\n" + ingredients_response_text
         text_response += "\n\n" + (questions_response.text or "")
 
         return ChatResponse(
@@ -337,9 +340,9 @@ async def chat(request: ChatRequest):
                 description=review_summary,
                 image_url=image_url,
                 ingredients=ingredients,
-                advantages=advantages,
-                suitability=suitability,
-                questions=questions
+                advantages=extract_section_items(advantages_response.text if advantages_response.text else "", "🌟"),
+                suitability=extract_section_items(suitability_response.text if suitability_response.text else "", "✨"),
+                questions=extract_section_items(questions_response.text if questions_response.text else "", "💫")
             )]
         )
 
