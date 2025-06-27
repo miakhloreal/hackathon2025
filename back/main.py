@@ -74,39 +74,41 @@ class ChatResponse(BaseModel):
 
 SYSTEM_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
 
-You are a L'Oréal beauty advisor analyzing the RAG search results. For each product query:
+You are a L'Oréal beauty advisor analyzing the RAG search results. 
 
-1. First identify the exact product name from the RAG results
-2. Provide a summary of the reviews found in the RAG results
-3. List the key product advantages and benefits
-4. Explain why this product would be suitable for the user
-5. Ask relevant follow-up questions to personalize recommendations
+If the user is asking for a product recommendation:
+1. Choose ONLY ONE product that best matches their needs
+2. Do not mention or compare multiple products
+3. Focus on providing detailed information about the single chosen product
 
-Format your response using ONLY information from the RAG results:
+Structure your response for product recommendations as follows:
 
-Product: [Exact product name as found in RAG]
+Product: [Single product name as found in RAG]
 
-Reviews Summary: [Summary based strictly on RAG review data]
+Reviews Summary: [Focused summary of reviews for this specific product]
 
 ## 🌟 PRODUCT ADVANTAGES
-• [First key advantage from RAG data]
-• [Second key advantage from RAG data]
-• [Third key advantage from RAG data]
+• [First key advantage of this product]
+• [Second key advantage of this product]
+• [Third key advantage of this product]
 
 ## ✨ WHY IT'S RIGHT FOR YOU
-• [First reason based on product benefits and user needs]
-• [Second reason based on customer experiences]
-• [Third reason based on product effectiveness]
+• [First reason this specific product matches user needs]
+• [Second reason this specific product is suitable]
+• [Third reason to choose this product]
 
 ## 💫 LET'S PERSONALIZE FURTHER
 • Have you tried similar products before? What was your experience?
 • What specific concerns would you like this product to address?
 • When do you plan to use this product in your routine?
 
+However, if the user is asking a general question about beauty, skincare, or product usage, provide a direct and informative response based on the RAG results without the structured format above. Always maintain a helpful and professional tone.
+
 If the RAG system doesn't provide certain information, acknowledge what's missing rather than making assumptions."""
 
 def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], list[str]]:
     """Extract product name, review summary, advantages, suitability reasons, and follow-up questions from RAG response."""
+    # Take only the first occurrence of each section to avoid duplicates
     product_name = ""
     review_summary = ""
     advantages = []
@@ -131,18 +133,18 @@ def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], lis
             review_summary = match.group(1).strip()
             break
     
-    # Extract advantages
-    advantages_section = re.search(r"## 🌟 PRODUCT ADVANTAGES\s*((?:•[^\n]+\n?)+)", text)
+    # Extract advantages (only first section)
+    advantages_section = re.search(r"## 🌟 PRODUCT ADVANTAGES\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
     if advantages_section:
         advantages = [adv.strip().lstrip('•').strip() for adv in advantages_section.group(1).split('\n') if adv.strip()]
     
-    # Extract suitability reasons
-    suitability_section = re.search(r"## ✨ WHY IT'S RIGHT FOR YOU\s*((?:•[^\n]+\n?)+)", text)
+    # Extract suitability reasons (only first section)
+    suitability_section = re.search(r"## ✨ WHY IT'S RIGHT FOR YOU\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
     if suitability_section:
         suitability = [reason.strip().lstrip('•').strip() for reason in suitability_section.group(1).split('\n') if reason.strip()]
 
-    # Extract follow-up questions
-    questions_section = re.search(r"## 💫 LET'S PERSONALIZE FURTHER\s*((?:•[^\n]+\n?)+)", text)
+    # Extract follow-up questions (only first section)
+    questions_section = re.search(r"## 💫 LET'S PERSONALIZE FURTHER\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
     if questions_section:
         questions = [q.strip().lstrip('•').strip() for q in questions_section.group(1).split('\n') if q.strip()]
     
@@ -170,8 +172,22 @@ async def chat(request: ChatRequest):
                 products=[]
             )
 
-        # Extract product information
-        product_name, review_summary, advantages, suitability, questions = extract_product_info(response.text)
+        # Clean up the response text to remove any duplicate sections
+        cleaned_text = re.sub(r'(## 🌟 PRODUCT ADVANTAGES.*?(?=##|$))(.*\1)', r'\1', response.text, flags=re.DOTALL)
+        cleaned_text = re.sub(r'(## ✨ WHY IT\'S RIGHT FOR YOU.*?(?=##|$))(.*\1)', r'\1', cleaned_text, flags=re.DOTALL)
+        cleaned_text = re.sub(r'(## 💫 LET\'S PERSONALIZE FURTHER.*?(?=##|$))(.*\1)', r'\1', cleaned_text, flags=re.DOTALL)
+
+        # Remove any additional product mentions after the first one
+        if "Product:" in cleaned_text:
+            parts = cleaned_text.split("Product:", 1)
+            if len(parts) > 1:
+                additional_products = re.split(r'Product:', parts[1], flags=re.IGNORECASE)[1:]
+                if additional_products:
+                    # Keep only the content up to any additional product mentions
+                    cleaned_text = "Product:" + re.split(r'Product:', parts[1], flags=re.IGNORECASE)[0]
+
+        # Extract product information from cleaned text
+        product_name, review_summary, advantages, suitability, questions = extract_product_info(cleaned_text)
 
         # Create formatted response
         formatted_response = {
@@ -185,7 +201,7 @@ async def chat(request: ChatRequest):
         # Format the text response to include all sections
         text_response = (
             json.dumps(formatted_response, indent=2) + "\n\n" +
-            response.text
+            cleaned_text
         )
 
         return ChatResponse(
@@ -196,7 +212,7 @@ async def chat(request: ChatRequest):
                 advantages=advantages,
                 suitability=suitability,
                 questions=questions
-            )]
+            )] if product_name else []
         )
 
     except Exception as e:
