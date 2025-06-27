@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-app = FastAPI(title="L'Oréal Beauty Advisor API")
+app = FastAPI(title="KnowLi Advisor API")
 
 # Configure CORS
 app.add_middleware(
@@ -98,7 +98,8 @@ Focus on:
 3. Notable results or effects
 
 Format your response EXACTLY as follows:
-Reviews Summary: [2-3 sentences summarizing user experiences and results]"""
+## 💭 What other users say about this product:
+[2-3 sentences summarizing user experiences and results]"""
 
 PRODUCT_IMAGE_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response.
 
@@ -135,7 +136,7 @@ You are a L'Oréal product expert analyzing the RAG search results for:
 Focus ONLY on the product's main advantages and benefits. List 3-4 key advantages.
 Format your response with bullet points:
 
-## 🌟 PRODUCT ADVANTAGES
+## 🌟 Main Product Benefits
 • [First key advantage with supporting evidence]
 • [Second key advantage with specific benefits]
 • [Third key advantage with unique selling point]"""
@@ -198,9 +199,16 @@ def extract_image_url(text: str) -> str:
 
 def extract_section_items(text: str, emoji: str) -> list[str]:
     """Extract bullet points from a section marked with the given emoji."""
+    # Look for section header with emoji and any text after it
     section = re.search(fr"## [{emoji}][^\n]*\s*((?:•[^\n]+\n?)+)", text)
     if section:
-        return [item.strip().lstrip('•').strip() for item in section.group(1).split('\n') if item.strip()]
+        # Extract bullet points, clean them up, and filter out empty lines
+        items = [
+            item.strip().lstrip('•').strip()
+            for item in section.group(1).split('\n')
+            if item.strip() and '•' in item  # Only include lines with bullet points
+        ]
+        return items
     return []
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -317,10 +325,9 @@ async def chat(request: ChatRequest):
         # Combine all responses
         text_response = json.dumps(formatted_response, indent=2)
         text_response += "\n\n" + (recommendation_response.text or "")
-        text_response += "\n\n" + (review_response.text or "")
         text_response += "\n\n" + (ingredients_response.text or "")
-        text_response += "\n\n" + (advantages_response.text or "")
         text_response += "\n\n" + (suitability_response.text or "")
+        text_response += "\n\n" + (review_response.text or "")
         text_response += "\n\n" + (questions_response.text or "")
 
         return ChatResponse(

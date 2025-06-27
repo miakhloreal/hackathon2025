@@ -27,9 +27,14 @@ export function ProductCard({ product }: ProductCardProps) {
             </div>
             <div className='flex-1'>
               <h3 className='text-lg font-semibold mb-2'>{product.name}</h3>
-              <p className='text-sm text-muted-foreground'>
-                {product.description}
-              </p>
+              <h4 className='text-md font-semibold mb-2'>
+                🌟 Main Product Benefits
+              </h4>
+              <ul className='list-disc pl-5 text-sm text-muted-foreground'>
+                {product.advantages.map((advantage, index) => (
+                  <li key={index}>{advantage}</li>
+                ))}
+              </ul>
             </div>
           </div>
           <div className='flex items-center justify-between'>
