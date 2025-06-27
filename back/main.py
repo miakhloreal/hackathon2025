@@ -78,14 +78,27 @@ PRODUCT_RECOMMENDATION_PROMPT = """IMPORTANT: Use ONLY the information provided 
 
 You are a L'Oréal beauty advisor analyzing the RAG search results. Your task is to recommend a single product that best matches the user's needs.
 
+Requirements:
 1. Choose ONLY ONE product that best matches their needs
 2. Do not mention or compare multiple products
 3. Focus on providing a clear recommendation
 
-Structure your response as follows:
+Format your response EXACTLY as follows:
+Product: [Single product name as found in RAG]"""
 
-Product: [Single product name as found in RAG]
-Reviews Summary: [Brief summary of reviews for this specific product]"""
+PRODUCT_REVIEW_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
+
+You are a L'Oréal product reviewer analyzing the RAG search results for:
+{product_name}
+
+Provide a brief but compelling summary of user reviews and experiences.
+Focus on:
+1. Overall user satisfaction
+2. Key benefits users experienced
+3. Notable results or effects
+
+Format your response EXACTLY as follows:
+Reviews Summary: [2-3 sentences summarizing user experiences and results]"""
 
 PRODUCT_IMAGE_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response.
 
@@ -153,30 +166,19 @@ Format your response with bullet points:
 • [Question about specific concerns to address]
 • [Question about usage preferences/routine]"""
 
-def extract_product_info_basic(text: str) -> tuple[str, str]:
-    """Extract product name and review summary from RAG response."""
-    product_name = ""
-    review_summary = ""
-    
-    # Look for product name patterns
-    name_match = re.search(r"(?:Product:|Name:|^)([^\.]+?)(?:\.|\n|$)", text, re.MULTILINE | re.IGNORECASE)
+def extract_product_name(text: str) -> str:
+    """Extract product name from the RAG response."""
+    name_match = re.search(r"Product:\s*([^\n]+)", text, re.IGNORECASE)
     if name_match:
-        product_name = name_match.group(1).strip()
-    
-    # Look for review summary patterns
-    review_patterns = [
-        r"Reviews? Summary:?\s*([^\.]+(?:\.[^\.]+){0,3}\.)",
-        r"Summary:?\s*([^\.]+(?:\.[^\.]+){0,3}\.)",
-        r"(?:overall|generally),?\s*([^\.]+(?:\.[^\.]+){0,3}\.)"
-    ]
-    
-    for pattern in review_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            review_summary = match.group(1).strip()
-            break
-    
-    return product_name, review_summary
+        return name_match.group(1).strip()
+    return ""
+
+def extract_review_summary(text: str) -> str:
+    """Extract review summary from the RAG response."""
+    summary_match = re.search(r"Reviews Summary:\s*([^\n]+(?:\.[^\n]+){0,2}\.)", text, re.IGNORECASE)
+    if summary_match:
+        return summary_match.group(1).strip()
+    return ""
 
 def extract_image_url(text: str) -> str:
     """Extract image URL from the RAG response."""
@@ -220,8 +222,8 @@ async def chat(request: ChatRequest):
                 products=[]
             )
 
-        # Extract basic product info
-        product_name, review_summary = extract_product_info_basic(recommendation_response.text)
+        # Extract product name
+        product_name = extract_product_name(recommendation_response.text)
 
         if not product_name:
             return ChatResponse(
@@ -229,7 +231,20 @@ async def chat(request: ChatRequest):
                 products=[]
             )
 
-        # Second RAG call: Get product image
+        # Second RAG call: Get review summary
+        review_response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=f"What do users say about {product_name}",
+            config=GenerateContentConfig(
+                tools=[rag_retrieval_tool],
+                system_instruction=PRODUCT_REVIEW_PROMPT.format(product_name=product_name)
+            )
+        )
+
+        # Extract review summary
+        review_summary = extract_review_summary(review_response.text if review_response.text else "")
+
+        # Third RAG call: Get product image
         image_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"Give me the image url for the product: {product_name}",
@@ -239,12 +254,10 @@ async def chat(request: ChatRequest):
             )
         )
 
-        print('image_response', image_response.text)
-
         # Extract image URL
         image_url = extract_image_url(image_response.text if image_response.text else "")
 
-        # Third RAG call: Get ingredients information
+        # Fourth RAG call: Get ingredients information
         ingredients_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"Tell me about the ingredients in {product_name}",
@@ -254,7 +267,7 @@ async def chat(request: ChatRequest):
             )
         )
 
-        # Fourth RAG call: Get product advantages
+        # Fifth RAG call: Get product advantages
         advantages_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"What are the main advantages of {product_name}",
@@ -264,7 +277,7 @@ async def chat(request: ChatRequest):
             )
         )
 
-        # Fifth RAG call: Get product suitability
+        # Sixth RAG call: Get product suitability
         suitability_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"Why is {product_name} right for the user",
@@ -274,7 +287,7 @@ async def chat(request: ChatRequest):
             )
         )
 
-        # Sixth RAG call: Get follow-up questions
+        # Seventh RAG call: Get follow-up questions
         questions_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"What follow-up questions should we ask about {product_name}",
@@ -304,6 +317,7 @@ async def chat(request: ChatRequest):
         # Combine all responses
         text_response = json.dumps(formatted_response, indent=2)
         text_response += "\n\n" + (recommendation_response.text or "")
+        text_response += "\n\n" + (review_response.text or "")
         text_response += "\n\n" + (ingredients_response.text or "")
         text_response += "\n\n" + (advantages_response.text or "")
         text_response += "\n\n" + (suitability_response.text or "")
