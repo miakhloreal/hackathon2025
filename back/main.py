@@ -325,9 +325,9 @@ async def chat(request: ChatRequest):
         # Combine all responses
         text_response = json.dumps(formatted_response, indent=2)
         text_response += "\n\n" + (recommendation_response.text or "")
-        text_response += "\n\n" + (ingredients_response.text or "")
         text_response += "\n\n" + (suitability_response.text or "")
         text_response += "\n\n" + (review_response.text or "")
+        text_response += "\n\n" + (ingredients_response.text or "")
         text_response += "\n\n" + (questions_response.text or "")
 
         return ChatResponse(
