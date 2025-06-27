@@ -218,30 +218,41 @@ async def chat(request: ChatRequest):
     try:
         # Get the current message and maintain conversation context
         current_message = request.messages[-1].content
-        conversation_history = " ".join([msg.content for msg in request.messages[:-1]])
+        conversation_history = [msg.content for msg in request.messages[:-1]]
         
-        # Check if this is a follow-up question about a previously recommended product
-        previous_product_match = re.search(r"Product:\s*([^\n]+)", conversation_history)
-        previous_product = previous_product_match.group(1).strip() if previous_product_match else None
+        # Extract previous product and user concerns from conversation history
+        previous_product = None
+        user_concerns = set()
+        
+        for msg in conversation_history:
+            # Look for previous product recommendations
+            product_match = re.search(r"Product:\s*([^\n]+)", msg)
+            if product_match:
+                previous_product = product_match.group(1).strip()
+            
+            # Extract user concerns (hair/skin conditions, preferences)
+            concerns = re.findall(r"(?:have|my)\s+((?:very|really|extremely|slightly)?\s*(?:oily|dry|damaged|sensitive|frizzy|thin|thick|colored|treated|curly|straight)\s+(?:hair|skin))", msg.lower())
+            user_concerns.update(concerns)
 
-        # If it's a follow-up question about ingredients and we have a previous product
-        if previous_product and any(keyword in current_message.lower() for keyword in ["ingredients", "what's in it", "what is in it", "composition"]):
+        # Modify the current query based on conversation history
+        if previous_product and "ingredients" in current_message.lower():
+            # Direct ingredients query about previous product
             product_name = previous_product
-            # Skip the recommendation call and go straight to ingredients
             recommendation_response = type('Response', (), {'text': f"Product: {product_name}"})()
         else:
-            # First RAG call: Get product recommendation
-            system_instruction = PRODUCT_RECOMMENDATION_PROMPT
+            # Build context-aware recommendation prompt
+            context_prompt = PRODUCT_RECOMMENDATION_PROMPT
             if previous_product:
-                # Modify the prompt to maintain conversation context
-                system_instruction += f"\n\nNote: The user previously asked about {previous_product}. Consider this context in your recommendation."
+                context_prompt += f"\n\nNote: User previously asked about {previous_product}."
+            if user_concerns:
+                context_prompt += f"\n\nUser mentioned these conditions: {', '.join(user_concerns)}."
             
             recommendation_response = client.models.generate_content(
                 model=MODEL_ID,
                 contents=current_message,
                 config=GenerateContentConfig(
                     tools=[rag_retrieval_tool],
-                    system_instruction=system_instruction
+                    system_instruction=context_prompt
                 )
             )
 
@@ -251,19 +262,46 @@ async def chat(request: ChatRequest):
                     products=[]
                 )
 
-            # Extract product name
             product_name = extract_product_name(recommendation_response.text)
-
             if not product_name:
                 return ChatResponse(
                     text=recommendation_response.text,
                     products=[]
                 )
 
-        # Second RAG call: Get review summary with context
+        # Build context-aware suitability prompt
+        suitability_context = PRODUCT_SUITABILITY_PROMPT.format(product_name=product_name)
+        if user_concerns:
+            suitability_context += f"\n\nAddress these specific concerns: {', '.join(user_concerns)}."
+        
+        # Get suitability information
+        suitability_response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=f"Why is {product_name} right for the user?",
+            config=GenerateContentConfig(
+                tools=[rag_retrieval_tool],
+                system_instruction=suitability_context
+            )
+        )
+
+        # Get product advantages with context
+        advantages_context = PRODUCT_ADVANTAGES_PROMPT.format(product_name=product_name)
+        if user_concerns:
+            advantages_context += f"\n\nHighlight benefits relevant to: {', '.join(user_concerns)}."
+        
+        advantages_response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=f"What are the main advantages of {product_name}",
+            config=GenerateContentConfig(
+                tools=[rag_retrieval_tool],
+                system_instruction=advantages_context
+            )
+        )
+
+        # Get review summary with context
         review_prompt = PRODUCT_REVIEW_PROMPT.format(product_name=product_name)
-        if previous_product:
-            review_prompt += f"\nConsider any previous discussion about {previous_product} in your response."
+        if user_concerns:
+            review_prompt += f"\n\nFocus on reviews relevant to: {', '.join(user_concerns)}."
         
         review_response = client.models.generate_content(
             model=MODEL_ID,
@@ -277,7 +315,7 @@ async def chat(request: ChatRequest):
         # Extract review summary
         review_summary = extract_review_summary(review_response.text if review_response.text else "")
 
-        # Third RAG call: Get product image
+        # Get image
         image_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"Give me the image url for the product: {product_name}",
@@ -287,16 +325,14 @@ async def chat(request: ChatRequest):
             )
         )
 
-        # Extract image URL
         image_url = extract_image_url(image_response.text if image_response.text else "")
 
-        # Initialize ingredients list
+        # Initialize ingredients
         ingredients = []
         ingredients_response_text = ""
 
-        # Only get ingredients if specifically asked for them
-        if any(keyword in current_message.lower() for keyword in ["ingredients", "what's in it", "what is in it", "composition"]):
-            # Get ingredients information
+        # Get ingredients if requested
+        if "ingredients" in current_message.lower():
             ingredients_response = client.models.generate_content(
                 model=MODEL_ID,
                 contents=f"Tell me about the ingredients in {product_name}",
@@ -308,33 +344,17 @@ async def chat(request: ChatRequest):
             ingredients = extract_section_items(ingredients_response.text if ingredients_response.text else "", "👩🏼‍🔬")
             ingredients_response_text = ingredients_response.text if ingredients_response.text else ""
 
-        # Fifth RAG call: Get product advantages
-        advantages_response = client.models.generate_content(
-            model=MODEL_ID,
-            contents=f"What are the main advantages of {product_name}",
-            config=GenerateContentConfig(
-                tools=[rag_retrieval_tool],
-                system_instruction=PRODUCT_ADVANTAGES_PROMPT.format(product_name=product_name)
-            )
-        )
-
-        # Sixth RAG call: Get product suitability
-        suitability_response = client.models.generate_content(
-            model=MODEL_ID,
-            contents=f"Why is {product_name} right for the user",
-            config=GenerateContentConfig(
-                tools=[rag_retrieval_tool],
-                system_instruction=PRODUCT_SUITABILITY_PROMPT.format(product_name=product_name)
-            )
-        )
-
-        # Seventh RAG call: Get follow-up questions
+        # Get personalized follow-up questions
+        questions_context = PRODUCT_QUESTIONS_PROMPT.format(product_name=product_name)
+        if user_concerns:
+            questions_context += f"\n\nConsider these concerns in your questions: {', '.join(user_concerns)}."
+        
         questions_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"What follow-up questions should we ask about {product_name}",
             config=GenerateContentConfig(
                 tools=[rag_retrieval_tool],
-                system_instruction=PRODUCT_QUESTIONS_PROMPT.format(product_name=product_name)
+                system_instruction=questions_context
             )
         )
 
