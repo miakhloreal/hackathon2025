@@ -146,7 +146,7 @@ PRODUCT_SUITABILITY_PROMPT = """IMPORTANT: Use ONLY the information provided by 
 You are a L'Oréal beauty advisor analyzing the RAG search results for:
 {product_name}
 
-Focus ONLY on why this product is suitable for the user. List 3 main reasons.
+Focus on creating a personalized response that connects with the user's needs. List 3 main reasons that specifically address their concerns.
 Format your response with bullet points:
 
 ## ✨ WHY IT'S RIGHT FOR YOU
@@ -159,13 +159,15 @@ PRODUCT_QUESTIONS_PROMPT = """IMPORTANT: Use ONLY the information provided by th
 You are a L'Oréal beauty consultant analyzing the RAG search results for:
 {product_name}
 
-Create 2-3 follow-up questions to better understand the user's needs and preferences.
+Create 2-3 relevant follow-up questions that build on the previous conversation and help personalize the recommendation further.
+The questions should feel natural and connected to what we already know about the user's needs.
+
 Format your response with bullet points:
 
 ## 💫 PERSONALIZATION QUESTIONS
-• [Question about previous experience with similar products]
-• [Question about specific concerns to address]
-• [Question about usage preferences/routine]"""
+• [Question that builds on previous responses]
+• [Question about specific concerns mentioned earlier]
+• [Question to further personalize the recommendation]"""
 
 def extract_product_name(text: str) -> str:
     """Extract product name from the RAG response."""
@@ -214,38 +216,61 @@ def extract_section_items(text: str, emoji: str) -> list[str]:
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        # First RAG call: Get product recommendation
-        recommendation_response = client.models.generate_content(
-            model=MODEL_ID,
-            contents=request.messages[-1].content,
-            config=GenerateContentConfig(
-                tools=[rag_retrieval_tool],
-                system_instruction=PRODUCT_RECOMMENDATION_PROMPT
+        # Get the current message and maintain conversation context
+        current_message = request.messages[-1].content
+        conversation_history = " ".join([msg.content for msg in request.messages[:-1]])
+        
+        # Check if this is a follow-up question about a previously recommended product
+        previous_product_match = re.search(r"Product:\s*([^\n]+)", conversation_history)
+        previous_product = previous_product_match.group(1).strip() if previous_product_match else None
+
+        # If it's a follow-up question about ingredients and we have a previous product
+        if previous_product and any(keyword in current_message.lower() for keyword in ["ingredients", "what's in it", "what is in it", "composition"]):
+            product_name = previous_product
+            # Skip the recommendation call and go straight to ingredients
+            recommendation_response = type('Response', (), {'text': f"Product: {product_name}"})()
+        else:
+            # First RAG call: Get product recommendation
+            system_instruction = PRODUCT_RECOMMENDATION_PROMPT
+            if previous_product:
+                # Modify the prompt to maintain conversation context
+                system_instruction += f"\n\nNote: The user previously asked about {previous_product}. Consider this context in your recommendation."
+            
+            recommendation_response = client.models.generate_content(
+                model=MODEL_ID,
+                contents=current_message,
+                config=GenerateContentConfig(
+                    tools=[rag_retrieval_tool],
+                    system_instruction=system_instruction
+                )
             )
-        )
 
-        if not recommendation_response.text:
-            return ChatResponse(
-                text="I apologize, I couldn't generate a response.",
-                products=[]
-            )
+            if not recommendation_response.text:
+                return ChatResponse(
+                    text="I apologize, I couldn't generate a response.",
+                    products=[]
+                )
 
-        # Extract product name
-        product_name = extract_product_name(recommendation_response.text)
+            # Extract product name
+            product_name = extract_product_name(recommendation_response.text)
 
-        if not product_name:
-            return ChatResponse(
-                text=recommendation_response.text,
-                products=[]
-            )
+            if not product_name:
+                return ChatResponse(
+                    text=recommendation_response.text,
+                    products=[]
+                )
 
-        # Second RAG call: Get review summary
+        # Second RAG call: Get review summary with context
+        review_prompt = PRODUCT_REVIEW_PROMPT.format(product_name=product_name)
+        if previous_product:
+            review_prompt += f"\nConsider any previous discussion about {previous_product} in your response."
+        
         review_response = client.models.generate_content(
             model=MODEL_ID,
             contents=f"What do users say about {product_name}",
             config=GenerateContentConfig(
                 tools=[rag_retrieval_tool],
-                system_instruction=PRODUCT_REVIEW_PROMPT.format(product_name=product_name)
+                system_instruction=review_prompt
             )
         )
 
@@ -270,7 +295,7 @@ async def chat(request: ChatRequest):
         ingredients_response_text = ""
 
         # Only get ingredients if specifically asked for them
-        if any(keyword in request.messages[-1].content.lower() for keyword in ["ingredients", "what's in it", "what is in it", "composition"]):
+        if any(keyword in current_message.lower() for keyword in ["ingredients", "what's in it", "what is in it", "composition"]):
             # Get ingredients information
             ingredients_response = client.models.generate_content(
                 model=MODEL_ID,
