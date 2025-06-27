@@ -73,20 +73,26 @@ class ChatResponse(BaseModel):
     text: str
     products: Optional[List[ProductRecommendation]] = None
 
-SYSTEM_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
+PRODUCT_RECOMMENDATION_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
 
-You are a L'Oréal beauty advisor analyzing the RAG search results. 
+You are a L'Oréal beauty advisor analyzing the RAG search results. Your task is to recommend a single product that best matches the user's needs.
 
-If the user is asking for a product recommendation:
 1. Choose ONLY ONE product that best matches their needs
 2. Do not mention or compare multiple products
-3. Focus on providing detailed information about the single chosen product
+3. Focus on providing a clear recommendation
 
-Structure your response for product recommendations as follows:
+Structure your response as follows:
 
 Product: [Single product name as found in RAG]
+Reviews Summary: [Brief summary of reviews for this specific product]"""
 
-Reviews Summary: [Focused summary of reviews for this specific product]
+PRODUCT_DETAILS_PROMPT = """IMPORTANT: Use ONLY the information provided by the RAG system in your response. Do not generate or invent any information.
+
+You are a L'Oréal beauty advisor analyzing the RAG search results for the following product:
+
+{product_name}
+
+Please provide detailed information about this specific product using the following format:
 
 ## 👩🏼‍🔬 Information about the ingredients:
 • [List key active ingredients found in RAG data]
@@ -106,21 +112,12 @@ Reviews Summary: [Focused summary of reviews for this specific product]
 ## 💫 LET'S PERSONALIZE FURTHER
 • Have you tried similar products before? What was your experience?
 • What specific concerns would you like this product to address?
-• When do you plan to use this product in your routine?
+• When do you plan to use this product in your routine?"""
 
-However, if the user is asking a general question about beauty, skincare, or product usage, provide a direct and informative response based on the RAG results without the structured format above. Always maintain a helpful and professional tone.
-
-If the RAG system doesn't provide certain information, acknowledge what's missing rather than making assumptions."""
-
-def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], list[str], list[str]]:
-    """Extract product name, review summary, ingredients, advantages, suitability reasons, and follow-up questions from RAG response."""
-    # Take only the first occurrence of each section to avoid duplicates
+def extract_product_info_basic(text: str) -> tuple[str, str]:
+    """Extract product name and review summary from RAG response."""
     product_name = ""
     review_summary = ""
-    ingredients = []
-    advantages = []
-    suitability = []
-    questions = []
     
     # Look for product name patterns
     name_match = re.search(r"(?:Product:|Name:|^)([^\.]+?)(?:\.|\n|$)", text, re.MULTILINE | re.IGNORECASE)
@@ -139,9 +136,18 @@ def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], lis
         if match:
             review_summary = match.group(1).strip()
             break
+    
+    return product_name, review_summary
 
+def extract_product_details(text: str) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Extract ingredients, advantages, suitability reasons, and follow-up questions from RAG response."""
+    ingredients = []
+    advantages = []
+    suitability = []
+    questions = []
+    
     # Extract ingredients (only first section)
-    ingredients_section = re.search(r"## 👩🏼‍🔬 Here are the ingredients:\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
+    ingredients_section = re.search(r"## 👩🏼‍🔬 Information about the ingredients:\s*((?:•[^\n]+\n?)+)(?:##|$)", text)
     if ingredients_section:
         ingredients = [ing.strip().lstrip('•').strip() for ing in ingredients_section.group(1).split('\n') if ing.strip()]
     
@@ -160,7 +166,7 @@ def extract_product_info(text: str) -> tuple[str, str, list[str], list[str], lis
     if questions_section:
         questions = [q.strip().lstrip('•').strip() for q in questions_section.group(1).split('\n') if q.strip()]
     
-    return product_name, review_summary, ingredients, advantages, suitability, questions
+    return ingredients, advantages, suitability, questions
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -168,39 +174,50 @@ async def chat(request: ChatRequest):
         # Get the last user message
         last_message = request.messages[-1].content
         
-        # Generate content with RAG
-        response = client.models.generate_content(
+        # First RAG call: Get product recommendation
+        recommendation_response = client.models.generate_content(
             model=MODEL_ID,
             contents=last_message,
             config=GenerateContentConfig(
                 tools=[rag_retrieval_tool],
-                system_instruction=SYSTEM_PROMPT
+                system_instruction=PRODUCT_RECOMMENDATION_PROMPT
             )
         )
 
-        if not response.text:
+        if not recommendation_response.text:
             return ChatResponse(
                 text="I apologize, I couldn't generate a response.",
                 products=[]
             )
 
-        # Clean up the response text to remove any duplicate sections
-        cleaned_text = re.sub(r'(## 👩🏼‍🔬 Here are the ingredients:.*?(?=##|$))(.*\1)', r'\1', response.text, flags=re.DOTALL)
-        cleaned_text = re.sub(r'(## 🌟 PRODUCT ADVANTAGES.*?(?=##|$))(.*\1)', r'\1', cleaned_text, flags=re.DOTALL)
-        cleaned_text = re.sub(r'(## ✨ WHY IT\'S RIGHT FOR YOU.*?(?=##|$))(.*\1)', r'\1', cleaned_text, flags=re.DOTALL)
-        cleaned_text = re.sub(r'(## 💫 LET\'S PERSONALIZE FURTHER.*?(?=##|$))(.*\1)', r'\1', cleaned_text, flags=re.DOTALL)
+        # Extract basic product info
+        product_name, review_summary = extract_product_info_basic(recommendation_response.text)
 
-        # Remove any additional product mentions after the first one
-        if "Product:" in cleaned_text:
-            parts = cleaned_text.split("Product:", 1)
-            if len(parts) > 1:
-                additional_products = re.split(r'Product:', parts[1], flags=re.IGNORECASE)[1:]
-                if additional_products:
-                    # Keep only the content up to any additional product mentions
-                    cleaned_text = "Product:" + re.split(r'Product:', parts[1], flags=re.IGNORECASE)[0]
+        if not product_name:
+            # If no product was recommended, return the general response
+            return ChatResponse(
+                text=recommendation_response.text,
+                products=[]
+            )
 
-        # Extract product information from cleaned text
-        product_name, review_summary, ingredients, advantages, suitability, questions = extract_product_info(cleaned_text)
+        # Second RAG call: Get detailed product information
+        details_response = client.models.generate_content(
+            model=MODEL_ID,
+            contents=f"Tell me about {product_name}",
+            config=GenerateContentConfig(
+                tools=[rag_retrieval_tool],
+                system_instruction=PRODUCT_DETAILS_PROMPT.format(product_name=product_name)
+            )
+        )
+
+        if not details_response.text:
+            return ChatResponse(
+                text="I apologize, I couldn't generate detailed product information.",
+                products=[]
+            )
+
+        # Extract detailed product information
+        ingredients, advantages, suitability, questions = extract_product_details(details_response.text)
 
         # Create formatted response
         formatted_response = {
@@ -212,10 +229,11 @@ async def chat(request: ChatRequest):
             "questions": questions
         }
 
-        # Format the text response to include all sections
+        # Combine both responses
         text_response = (
             json.dumps(formatted_response, indent=2) + "\n\n" +
-            cleaned_text
+            recommendation_response.text + "\n\n" +
+            details_response.text
         )
 
         return ChatResponse(
@@ -227,7 +245,7 @@ async def chat(request: ChatRequest):
                 advantages=advantages,
                 suitability=suitability,
                 questions=questions
-            )] if product_name else []
+            )]
         )
 
     except Exception as e:
