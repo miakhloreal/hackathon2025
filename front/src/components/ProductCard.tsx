@@ -17,19 +17,21 @@ export function ProductCard({ product }: ProductCardProps) {
         className='block'
       >
         <div className='p-6'>
-          <div className='flex items-center gap-3 mb-2'>
-            <div className='w-[35px] h-[35px] flex-shrink-0 overflow-hidden rounded'>
+          <div className='flex gap-4 mb-4'>
+            <div className='w-[100px] h-auto flex-shrink-0 overflow-hidden rounded'>
               <img
                 src={product.image_url || defaultImageUrl}
                 alt={product.name}
-                className='h-full w-full object-cover'
+                className='h-full w-full object-contain'
               />
             </div>
-            <h3 className='text-lg font-semibold'>{product.name}</h3>
+            <div className='flex-1'>
+              <h3 className='text-lg font-semibold mb-2'>{product.name}</h3>
+              <p className='text-sm text-muted-foreground'>
+                {product.description}
+              </p>
+            </div>
           </div>
-          <p className='text-sm text-muted-foreground mb-4'>
-            {product.description}
-          </p>
           {product.ingredients && product.ingredients.length > 0 && (
             <div className='mb-4'>
               <h4 className='text-sm font-semibold mb-2'>Key Ingredients:</h4>
