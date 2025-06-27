@@ -3,7 +3,13 @@ import type { ChatMessage, ChatResponse } from '../types/chat';
 import { ProductCard } from './ProductCard';
 
 export function Chat() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      role: 'assistant',
+      content:
+        "👋 Hi! I'm kNOwLI, your personal beauty advisor. I'm here to help you discover the perfect L'Oréal products for your needs. Whether you're looking for skincare, haircare, or makeup recommendations, I'll guide you to the best solutions. What can I help you with today?",
+    },
+  ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -64,7 +70,13 @@ export function Chat() {
   };
 
   const handleReset = () => {
-    setMessages([]);
+    setMessages([
+      {
+        role: 'assistant',
+        content:
+          "👋 Hi! I'm kNOwLI, your personal beauty advisor. I'm here to help you discover the perfect L'Oréal products for your needs. Whether you're looking for skincare, haircare, or makeup recommendations, I'll guide you to the best solutions. What can I help you with today?",
+      },
+    ]);
   };
 
   const extractProducts = (text: string) => {
